@@ -1,0 +1,32 @@
+# Environment & Secrets
+.env
+.env.local
+*.env
+.streamlit/secrets.toml
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Temporary data files
+data/temp/
+*.tmp
+
+# Generated reports (keep sample reports or ignore runs)
+reports/*.pdf
+reports/*.md
+!reports/.gitkeep
+
+# Operating System files
+.DS_Store
+Thumbs.db
+Desktop.ini
