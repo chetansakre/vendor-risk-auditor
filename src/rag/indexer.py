@@ -140,17 +140,10 @@ class PolicyIndexer:
         if self.embeddings is None or not self.chunks:
             return []
         embedder = self._get_embedder()
-        if embedder:
-            q_vec = embedder.encode([query], normalize_embeddings=True)[0]
-        else:
-            q_vec = np.zeros(self.embeddings.shape[1], dtype=np.float32)
-            for w in query.lower().split():
-                # fallback matching
-                pass
-            norm = np.linalg.norm(q_vec)
-            if norm > 0:
-                q_vec /= norm
+        if not embedder:
+            return []
 
+        q_vec = embedder.encode([query], normalize_embeddings=True)[0]
         sims = np.dot(self.embeddings, q_vec)
         top_indices = np.argsort(sims)[::-1][:top_k]
         return [(self.chunks[i], float(sims[i])) for i in top_indices]

@@ -75,7 +75,7 @@ engine_mode = st.sidebar.radio(
     index=0
 )
 if "Qwen" in engine_mode:
-    qwen_url = st.sidebar.text_input("Server Base URL", value=os.getenv("QWEN_BASE_URL", "http://47.29.24.146:8002/v1"))
+    qwen_url = st.sidebar.text_input("Server Base URL", value=os.getenv("QWEN_BASE_URL", "http://localhost:8002/v1"))
     qwen_model = st.sidebar.text_input("Model Name", value=os.getenv("QWEN_MODEL_NAME", "qwen-122b"))
     if st.sidebar.button("🔍 Test Qwen Server Health"):
         from src.graph.llm_client import QwenLLMClient

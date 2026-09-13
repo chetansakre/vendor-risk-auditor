@@ -43,7 +43,7 @@ TOOLS_METADATA = [
     },
     {
         "name": "send_slack_alert",
-        "description": "Dispatches an executive security alert card to the #security-vendor-reviews Slack channel.",
+        "description": "Dispatches an executive security alert card to the #security-reviews Slack channel.",
         "inputSchema": {
             "type": "object",
             "properties": {

@@ -12,7 +12,7 @@ load_dotenv()
 
 class QwenLLMClient:
     def __init__(self, base_url=None, api_key=None, model=None):
-        self.base_url = (base_url or os.getenv("QWEN_BASE_URL", "http://47.29.24.146:8002/v1")).rstrip("/")
+        self.base_url = (base_url or os.getenv("QWEN_BASE_URL", "http://localhost:8002/v1")).rstrip("/")
         self.api_key = api_key or os.getenv("QWEN_API_KEY", "")
         self.model = model or os.getenv("QWEN_MODEL_NAME", "qwen-122b")
 

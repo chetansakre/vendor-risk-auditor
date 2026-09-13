@@ -18,7 +18,8 @@ env/
 ENV/
 
 # Temporary data files
-data/temp/
+data/temp/*
+!data/temp/.gitkeep
 *.tmp
 
 # Generated reports (keep sample reports or ignore runs)

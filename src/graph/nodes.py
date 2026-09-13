@@ -171,18 +171,32 @@ def audit_compliance_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 reasoning = "Failed to confirm both AES-256 and modern TLS encryption standards."
 
         elif cat == "AI_Governance":
-            trains_on_data = ("fine-tune" in text_lower or "train" in text_lower or "quality assurance" in text_lower or "optimization" in text_lower) and ("not" not in text_lower and "never" not in text_lower)
-            zero_guarantee = "never stored" in text_lower or "zero data retention" in text_lower or "never used to train" in text_lower
+            zero_guarantee = (
+                "never used to train" in text_lower
+                or "zero data retention" in text_lower
+                or "never stored" in text_lower
+                or "will not use" in text_lower
+                or "does not train" in text_lower
+                or "not used for training" in text_lower
+                or "no customer data is used to train" in text_lower
+            )
+            trains_on_data = (
+                "fine-tune" in text_lower
+                or "fine tune" in text_lower
+                or ("train" in text_lower and not zero_guarantee)
+                or ("quality assurance" in text_lower and not zero_guarantee)
+                or ("optimization" in text_lower and not zero_guarantee)
+            )
             
             if zero_guarantee:
                 status = "PASS"
                 confidence = 0.98
-                evidence = _find_matching_snippet(text, ["never used to train", "zero data retention", "never stored"])
+                evidence = _find_matching_snippet(text, ["never used to train", "zero data retention", "never stored", "does not train", "will not use"])
                 reasoning = "Vendor provides explicit, legally binding Zero Data Retention and Zero Model Training guarantees."
             elif trains_on_data:
                 status = "FAIL"
                 confidence = 0.96
-                evidence = _find_matching_snippet(text, ["fine-tune", "train", "optimize", "quality assurance"])
+                evidence = _find_matching_snippet(text, ["fine-tune", "fine tune", "train", "optimize", "quality assurance"])
                 reasoning = "CRITICAL VIOLATION: Vendor utilizes customer data/prompts for internal model training and optimization."
             else:
                 status = "NEEDS_REVIEW"
@@ -231,16 +245,19 @@ def audit_compliance_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 reasoning = "Subprocessor notification terms require manual review."
 
         elif cat == "Incident_Response":
-            if "12" in text_lower or "24 hours" in text_lower or "24" in text_lower or "immediate" in text_lower:
+            has_fast_sla = bool(re.search(r"\b(12|24)\s*(?:hours?|hrs?)\b", text_lower) or "immediate" in text_lower or "without undue delay" in text_lower)
+            has_slow_sla = bool(re.search(r"\b(48|72|96)\s*(?:hours?|hrs?)\b", text_lower) or "seventy-two" in text_lower)
+
+            if has_fast_sla and not has_slow_sla:
                 status = "PASS"
                 confidence = 0.95
-                evidence = _find_matching_snippet(text, ["24 hours", "12 hours", "immediate"])
+                evidence = _find_matching_snippet(text, ["24 hours", "12 hours", "immediate", "without undue delay"])
                 reasoning = "Complies with enterprise 24-hour mandatory security breach notification SLA."
-            elif "72 hours" in text_lower or "72" in text_lower or "seventy-two" in text_lower:
+            elif has_slow_sla:
                 status = "FAIL"
                 confidence = 0.92
-                evidence = _find_matching_snippet(text, ["seventy-two", "72 hours", "72"])
-                reasoning = "VIOLATION: 72-hour notification SLA exceeds enterprise mandatory 24-hour SLA."
+                evidence = _find_matching_snippet(text, ["72 hours", "seventy-two", "48 hours", "96 hours"])
+                reasoning = "VIOLATION: Breach notification SLA exceeds enterprise mandatory 24-hour limit."
             else:
                 status = "NEEDS_REVIEW"
                 confidence = 0.60
