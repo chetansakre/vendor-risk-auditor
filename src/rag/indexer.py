@@ -2,13 +2,14 @@
 Policy Indexer
 Chunks internal security policies and builds dual-retrieval indices:
 1. BM25 inverted keyword index
-2. Dense semantic embeddings (via sentence-transformers or cosine-similarity vector embeddings)
+2. Dense semantic embeddings (via sentence-transformers) with full TF-IDF fallback
 """
 import os
 import re
 from typing import List, Dict, Any
 import numpy as np
 from rank_bm25 import BM25Okapi
+
 
 class PolicyChunk:
     def __init__(self, policy_id: str, title: str, category: str, content: str, rules: List[str]):
@@ -27,6 +28,7 @@ class PolicyChunk:
             "rules": self.rules
         }
 
+
 class PolicyIndexer:
     def __init__(self, policies_dir: str = None):
         if policies_dir is None:
@@ -37,6 +39,10 @@ class PolicyIndexer:
         self.bm25: BM25Okapi = None
         self.embeddings: np.ndarray = None
         self._embedder = None
+        # FIX (NEW-A): Store vocab index so search_dense can encode queries the same
+        # way as documents when sentence-transformers is unavailable.
+        self._vocab_idx: Dict[str, int] = {}
+        self._use_tfidf_fallback: bool = False
         self._build_index()
 
     def _get_embedder(self):
@@ -45,7 +51,7 @@ class PolicyIndexer:
                 from sentence_transformers import SentenceTransformer
                 self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
             except Exception as e:
-                print(f"[PolicyIndexer] Warning: SentenceTransformer fallback mode: {e}")
+                print(f"[PolicyIndexer] Warning: SentenceTransformer unavailable, using TF-IDF fallback: {e}")
                 self._embedder = None
         return self._embedder
 
@@ -71,24 +77,29 @@ class PolicyIndexer:
         # 2. Build Dense Embeddings
         embedder = self._get_embedder()
         texts = [f"{c.category} - {c.title}: {c.content}" for c in self.chunks]
+
         if embedder:
             self.embeddings = embedder.encode(texts, normalize_embeddings=True)
+            self._use_tfidf_fallback = False
         else:
-            # Simple TF-IDF term frequency vector fallback
+            # FIX (NEW-A): Full TF-IDF fallback — build vocab AND store it so
+            # search_dense can encode query vectors with the same vocabulary.
+            # Previously the vocab was built here but never stored, so search_dense
+            # returned [] immediately, wasting all this index-build work.
             vocab = sorted(list(set(word for doc in corpus for word in doc)))
-            vocab_idx = {w: i for i, w in enumerate(vocab)}
+            self._vocab_idx = {w: i for i, w in enumerate(vocab)}
             vectors = np.zeros((len(self.chunks), len(vocab)), dtype=np.float32)
             for doc_idx, doc in enumerate(corpus):
                 for w in doc:
-                    if w in vocab_idx:
-                        vectors[doc_idx, vocab_idx[w]] += 1.0
+                    if w in self._vocab_idx:
+                        vectors[doc_idx, self._vocab_idx[w]] += 1.0
                 norm = np.linalg.norm(vectors[doc_idx])
                 if norm > 0:
                     vectors[doc_idx] /= norm
             self.embeddings = vectors
+            self._use_tfidf_fallback = True
 
     def _parse_policy_file(self, filename: str, text: str):
-        # Split by ## Section
         sections = re.split(r"\n##\s+", text)
         for s in sections:
             s = s.strip()
@@ -99,7 +110,6 @@ class PolicyIndexer:
             header = lines[0].strip()
             body = "\n".join(lines[1:]).strip()
 
-            # Determine Category
             cat = "General"
             h_lower = header.lower()
             if "encryption" in h_lower or "cryptograph" in h_lower:
@@ -139,11 +149,26 @@ class PolicyIndexer:
     def search_dense(self, query: str, top_k: int = 3) -> List[tuple]:
         if self.embeddings is None or not self.chunks:
             return []
+
         embedder = self._get_embedder()
-        if not embedder:
+
+        if embedder:
+            # Full semantic embedding path
+            q_vec = embedder.encode([query], normalize_embeddings=True)[0]
+        elif self._use_tfidf_fallback and self._vocab_idx:
+            # FIX (NEW-A): Use the stored vocab to encode the query vector with the
+            # same TF-IDF method used during _build_index. Previously this branch
+            # returned [] immediately, silently discarding the index-build work.
+            q_vec = np.zeros(self.embeddings.shape[1], dtype=np.float32)
+            for w in query.lower().split():
+                if w in self._vocab_idx:
+                    q_vec[self._vocab_idx[w]] += 1.0
+            norm = np.linalg.norm(q_vec)
+            if norm > 0:
+                q_vec /= norm
+        else:
             return []
 
-        q_vec = embedder.encode([query], normalize_embeddings=True)[0]
         sims = np.dot(self.embeddings, q_vec)
         top_indices = np.argsort(sims)[::-1][:top_k]
         return [(self.chunks[i], float(sims[i])) for i in top_indices]

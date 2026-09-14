@@ -14,6 +14,14 @@ sys.path.insert(0, BASE_DIR)
 from src.utils.parser import parse_document
 from src.graph.workflow import build_audit_graph
 from src.rag.indexer import PolicyIndexer
+# FIX: Moved pdf_generator import to module level so an ImportError surfaces
+# immediately at startup (with a clear message) rather than mid-audit inside
+# a conditional block where it's harder to diagnose.
+try:
+    from src.utils.pdf_generator import generate_pdf_report
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
 
 st.set_page_config(
     page_title="Autonomous Vendor Risk Auditor",
@@ -24,6 +32,9 @@ st.set_page_config(
 
 st.title("🛡️ Autonomous Enterprise Vendor Risk & Security Auditor")
 st.caption("Powered by **LangGraph** (State Machine & HITL) • **Model Context Protocol (MCP)** • **Advanced Hybrid RAG**")
+
+if not PDF_AVAILABLE:
+    st.warning("⚠️ `reportlab` not installed — PDF export disabled. Run `pip install reportlab>=4.0.0` to enable.")
 
 @st.cache_resource
 def get_cached_indexer():
@@ -75,6 +86,7 @@ engine_mode = st.sidebar.radio(
     index=0
 )
 if "Qwen" in engine_mode:
+    # FIX: Default now reads from env var with safe localhost fallback (no hardcoded IP)
     qwen_url = st.sidebar.text_input("Server Base URL", value=os.getenv("QWEN_BASE_URL", "http://localhost:8002/v1"))
     qwen_model = st.sidebar.text_input("Model Name", value=os.getenv("QWEN_MODEL_NAME", "qwen-122b"))
     if st.sidebar.button("🔍 Test Qwen Server Health"):
@@ -85,7 +97,7 @@ if "Qwen" in engine_mode:
             if res.get("online"):
                 st.sidebar.success(f"✅ Connected! Models found: {res.get('models', [])}")
             else:
-                st.sidebar.warning("⚠️ Server unreachable. Check if VPN is required or IP is whitelisted in cloud firewall.")
+                st.sidebar.warning("⚠️ Server unreachable. Check if VPN is required or IP is whitelisted.")
 elif "Cloud" in engine_mode:
     api_key = st.sidebar.text_input("OpenAI / Anthropic API Key", type="password", placeholder="sk-...")
     st.sidebar.caption("🔒 Key held in memory only.")
@@ -127,6 +139,7 @@ if start_audit and target_path:
             "human_feedback": "",
             "mcp_actions_taken": [],
             "current_step": "Initialized",
+            # FIX: llm_provider is now declared in RiskAuditState, so this key is valid
             "llm_provider": "qwen" if "Qwen" in engine_mode else "local"
         }
 
@@ -163,7 +176,6 @@ if st.session_state.audit_done and st.session_state.graph_state:
     if st.session_state.get("mcp_done", False):
         st.success("### 🎉 MCP Operation Performed Successfully! All tools have finished execution.")
         b1, b2, b3 = st.columns(3)
-        actions = st.session_state.graph_state.values.get("mcp_actions_taken", [])
         with b1:
             st.info("📄 **Audit Report Archived**\nSaved to `reports/` folder")
         with b2:
@@ -171,27 +183,28 @@ if st.session_state.audit_done and st.session_state.graph_state:
         with b3:
             st.info("💬 **Slack Alert Sent**\nCard dispatched to `#security-reviews`")
 
-    from src.utils.pdf_generator import generate_pdf_report
-
-    pdf_bytes = generate_pdf_report(
-        vendor_name=vendor_name,
-        scorecard=scorecard,
-        checklist=checklist,
-        human_reviewer=snapshot.values.get("human_reviewer", "Lead Information Security Officer"),
-        decision=snapshot.values.get("human_feedback", "Pending Authorization"),
-        comments=snapshot.values.get("human_feedback", ""),
-        mcp_actions=snapshot.values.get("mcp_actions_taken", [])
-    )
-
+    # Download buttons
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
-        st.download_button(
-            label="📥 Download Official Audit Certificate (PDF)",
-            data=pdf_bytes,
-            file_name=f"Enterprise_Security_Audit_{vendor_name.replace(' ', '_')}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
+        if PDF_AVAILABLE:
+            pdf_bytes = generate_pdf_report(
+                vendor_name=vendor_name,
+                scorecard=scorecard,
+                checklist=checklist,
+                human_reviewer=snapshot.values.get("human_reviewer", "Lead Information Security Officer"),
+                decision=snapshot.values.get("human_feedback", "Pending Authorization"),
+                comments=snapshot.values.get("human_feedback", ""),
+                mcp_actions=snapshot.values.get("mcp_actions_taken", [])
+            )
+            st.download_button(
+                label="📥 Download Official Audit Certificate (PDF)",
+                data=pdf_bytes,
+                file_name=f"Enterprise_Security_Audit_{vendor_name.replace(' ', '_')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+        else:
+            st.info("Install `reportlab` to enable PDF export.")
     with col_dl2:
         md_text = f"# Enterprise Vendor Risk Audit: {vendor_name}\n**Overall Risk**: {overall_risk}\n**Risk Score**: {scorecard.get('risk_score_numeric', 0)}/100\n\n## Executive Summary\n{scorecard.get('executive_summary', '')}\n\n## Detailed Compliance Matrix\n"
         for it in checklist:
@@ -214,7 +227,6 @@ if st.session_state.audit_done and st.session_state.graph_state:
     with tab1:
         st.subheader(f"Compliance Matrix for {vendor_name}")
         st.info(scorecard.get("executive_summary", ""))
-
         for item in checklist:
             status = item["status"]
             icon = "✅" if status == "PASS" else ("❌" if status == "FAIL" else "⚠️")
@@ -225,64 +237,51 @@ if st.session_state.audit_done and st.session_state.graph_state:
 
     with tab2:
         st.subheader("🛑 LangGraph Checkpoint: Security Officer Authorization")
-        
         if st.session_state.mcp_done:
             st.success("### ✅ Operation Successfully Performed!")
-            st.markdown(
-                """
-                **The Human-in-the-Loop authorization has been submitted and the Model Context Protocol (MCP) server has successfully executed all automated downstream actions:**
-                
-                - 📄 **Audit Report Archived**: Saved full markdown compliance brief to the `reports/` folder.
-                - 🎫 **Jira Ticket Logged**: Automated security issue logged with assigned SLA based on audit risk.
-                - 💬 **Slack Alert Dispatched**: Interactive notification card posted to `#security-reviews`.
-                
-                👉 **Switch to the next tab ('🔌 MCP Tool Actions') to inspect the live JSON response payloads from the MCP server!**
-                """
-            )
+            st.markdown("""
+**The Human-in-the-Loop authorization has been submitted and the MCP server has successfully executed all automated downstream actions:**
+
+- 📄 **Audit Report Archived**: Saved full markdown compliance brief to the `reports/` folder.
+- 🎫 **Jira Ticket Logged**: Automated security issue logged with assigned SLA based on audit risk.
+- 💬 **Slack Alert Dispatched**: Interactive notification card posted to `#security-reviews`.
+
+👉 **Switch to the next tab ('🔌 MCP Tool Actions') to inspect the live JSON response payloads from the MCP server!**
+""")
             if st.button("🔄 Re-evaluate / Modify Decision"):
                 st.session_state.mcp_done = False
                 st.rerun()
         else:
-            st.write("The state machine is currently suspended at a checkpoint. High-impact actions (Jira tickets, file archiving, Slack notifications) require human sign-off.")
-
+            st.write("The state machine is currently suspended at a checkpoint. High-impact actions require human sign-off.")
             col_a, col_b = st.columns(2)
             with col_a:
                 reviewer = st.text_input("Reviewer Name / Role", value="Lead Information Security Officer")
             with col_b:
                 decision = st.selectbox("Authorization Decision", ["Approve Conditional on Legal Rider", "Full Approval", "Reject Vendor"])
-
             comments = st.text_area("Audit Notes & Instructions", value="Reviewed automated LangGraph scorecard. Proceed with MCP logging.")
 
             if st.button("✍️ Submit Decision & Trigger MCP Tools", type="primary"):
                 with st.spinner("Resuming LangGraph to execute MCP tools..."):
                     graph = st.session_state.graph
                     config = st.session_state.config
-
                     graph.update_state(config, {
                         "human_approved": "Approval" in decision,
                         "human_reviewer": reviewer,
                         "human_feedback": f"[{decision}] {comments}"
                     })
-
                     for _ in graph.stream(None, config=config):
                         pass
-
                     st.session_state.graph_state = graph.get_state(config)
                     st.session_state.mcp_done = True
                     st.toast("🎉 Decision recorded! MCP tools successfully executed.", icon="✅")
-                    
                     st.success("### ✅ Operation Successfully Performed!")
-                    st.markdown(
-                        """
-                        **The Human-in-the-Loop authorization has been submitted and the Model Context Protocol (MCP) server has successfully executed all automated downstream actions:**
-                        
-                        - 📄 **Audit Report Archived**: Saved full markdown compliance brief to the `reports/` folder.
-                        - 🎫 **Jira Ticket Logged**: Automated security issue logged with assigned SLA based on audit risk.
-                        - 💬 **Slack Alert Dispatched**: Interactive notification card posted to `#security-reviews`.
-                        
-                        👉 **Switch to Tab 3 ('🔌 MCP Tool Actions') to inspect the live JSON response payloads from the MCP server!**
-                        """
-                    )
+                    st.markdown("""
+- 📄 **Audit Report Archived**: Saved to `reports/` folder.
+- 🎫 **Jira Ticket Logged**: Security issue logged with assigned SLA.
+- 💬 **Slack Alert Dispatched**: Card posted to `#security-reviews`.
+
+👉 Switch to Tab 3 to inspect MCP JSON payloads.
+""")
 
     with tab3:
         st.subheader("🔌 Model Context Protocol (MCP) Logs")
@@ -293,7 +292,7 @@ if st.session_state.audit_done and st.session_state.graph_state:
                 st.markdown(f"#### 🛠️ Tool Invoked: `{act['tool']}`")
                 st.json(act["result"])
         else:
-            st.info("⏳ MCP tools are on hold. They will be dispatched once you grant Human-in-the-Loop authorization in **Tab 2**.")
+            st.info("⏳ MCP tools are on hold. Grant Human-in-the-Loop authorization in **Tab 2** to trigger them.")
 
     with tab4:
         st.subheader("Enterprise Baseline Security Policies")

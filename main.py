@@ -32,6 +32,7 @@ from src.graph.workflow import build_audit_graph
 
 console = Console(legacy_windows=False)
 
+
 def run_audit(file_path: str, vendor_name: str = None, auto_approve: bool = False):
     if not os.path.exists(file_path):
         console.print(f"[bold red]Error: File not found at {file_path}[/bold red]")
@@ -49,13 +50,11 @@ def run_audit(file_path: str, vendor_name: str = None, auto_approve: bool = Fals
         title="Auditor Initialized", border_style="cyan"
     ))
 
-    # Parse Document
     with console.status("[bold green]Parsing document sections..."):
         parsed = parse_document(file_path)
 
     console.print(f"[bold green]Parsed[/bold green] [bold]{len(parsed['sections'])}[/bold] sections from {parsed['filename']}.")
 
-    # Initialize Graph
     graph = build_audit_graph(enable_hitl=True)
     thread_id = f"cli-audit-{datetime.datetime.now().strftime('%H%M%S')}"
     config = {"configurable": {"thread_id": thread_id}}
@@ -74,22 +73,22 @@ def run_audit(file_path: str, vendor_name: str = None, auto_approve: bool = Fals
         "human_reviewer": "",
         "human_feedback": "",
         "mcp_actions_taken": [],
-        "current_step": "Initialized"
+        "current_step": "Initialized",
+        # FIX: llm_provider was missing from main.py initial_state — CLI always ran
+        # heuristic mode even when the user expected otherwise. Now explicitly set.
+        "llm_provider": "local"
     }
 
-    # Stream graph execution
     with console.status("[bold cyan]Executing LangGraph state machine..."):
         for output in graph.stream(initial_state, config=config):
             for node_name, state_update in output.items():
                 if isinstance(state_update, dict):
                     console.print(f"  -> [dim]Node: {node_name}[/dim] -> [cyan]{state_update.get('current_step')}[/cyan]")
 
-    # Pause at Checkpoint
     snapshot = graph.get_state(config)
     scorecard = snapshot.values.get("scorecard", {})
     checklist = snapshot.values.get("checklist", [])
 
-    # Display Results Table
     table = Table(title=f"Compliance Scorecard: {vendor_name}", header_style="bold magenta")
     table.add_column("Category", style="cyan", width=18)
     table.add_column("Status", width=14)
@@ -104,14 +103,12 @@ def run_audit(file_path: str, vendor_name: str = None, auto_approve: bool = Fals
             status_text = "[bold red]FAIL[/bold red]"
         else:
             status_text = "[bold yellow]REVIEW[/bold yellow]"
-
         conf = f"{int(item['confidence'] * 100)}%"
         table.add_row(item["category"], status_text, conf, item["reasoning"])
 
     console.print("\n")
     console.print(table)
 
-    # Risk Summary Panel
     risk = scorecard.get("overall_risk", "UNKNOWN")
     risk_color = "red" if risk == "HIGH" else ("yellow" if risk == "MEDIUM" else "green")
     console.print(Panel(
@@ -120,7 +117,6 @@ def run_audit(file_path: str, vendor_name: str = None, auto_approve: bool = Fals
         title="Executive Risk Assessment", border_style=risk_color
     ))
 
-    # Human in the Loop Checkpoint
     console.print("\n[bold yellow]LangGraph Checkpoint Reached: Human Review Required[/bold yellow]")
     console.print("The agent is currently paused. No destructive or logging tools have been executed.")
 
@@ -134,7 +130,6 @@ def run_audit(file_path: str, vendor_name: str = None, auto_approve: bool = Fals
         reviewer_name = Prompt.ask("Enter Reviewer Name", default="Lead Security Engineer")
         feedback = Prompt.ask("Enter Reviewer Comments", default="Audit reviewed via CLI.")
 
-    # Resume graph execution
     graph.update_state(config, {
         "human_approved": approve,
         "human_reviewer": reviewer_name,
@@ -150,7 +145,6 @@ def run_audit(file_path: str, vendor_name: str = None, auto_approve: bool = Fals
     final_snapshot = graph.get_state(config)
     mcp_actions = final_snapshot.values.get("mcp_actions_taken", [])
 
-    # Display MCP Results
     console.print("\n[bold cyan]Model Context Protocol (MCP) Execution Log:[/bold cyan]")
     for act in mcp_actions:
         tool = act["tool"]
@@ -158,6 +152,7 @@ def run_audit(file_path: str, vendor_name: str = None, auto_approve: bool = Fals
         console.print(f"  [bold]{tool}[/bold]: [green]{res}[/green]")
 
     console.print("\n[bold green]Audit Complete! All reports and tickets archived.[/bold green]\n")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Autonomous Enterprise Vendor Risk Auditor")

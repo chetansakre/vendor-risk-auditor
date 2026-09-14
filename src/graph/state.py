@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
 
+
 class ChecklistItem(BaseModel):
     clause_id: str
     category: str
@@ -15,6 +16,7 @@ class ChecklistItem(BaseModel):
     evidence: str = Field(description="Direct verbatim quote from vendor doc")
     reasoning: str = Field(description="Explanation of why it passed or failed")
 
+
 class RiskScorecard(BaseModel):
     overall_risk: str = Field(description="LOW, MEDIUM, or HIGH")
     risk_score_numeric: int = Field(description="0 to 100, where 0 is safest, 100 is highest risk")
@@ -23,6 +25,7 @@ class RiskScorecard(BaseModel):
     review_count: int = 0
     executive_summary: str = ""
     critical_findings: List[str] = []
+
 
 class RiskAuditState(TypedDict):
     vendor_name: str
@@ -39,3 +42,4 @@ class RiskAuditState(TypedDict):
     human_feedback: str
     mcp_actions_taken: List[Dict[str, Any]]
     current_step: str
+    llm_provider: str  # FIX: was missing — caused TypedDict violation when app.py passed this key
